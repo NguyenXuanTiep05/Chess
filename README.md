@@ -1,2 +1,2 @@
 # Chess
-Small chess program i used as graduation project. (Nothing special)
+A program born from my passion for Chess.
