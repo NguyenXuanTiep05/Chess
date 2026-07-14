@@ -9,6 +9,7 @@ namespace šachys
     {
         realizacePohybu realizacePohybu = new realizacePohybu();
         detekceSachu detekceSachu = new detekceSachu();
+        TahFigurka tahFigurka = new TahFigurka();
 
         public const int PawnValue = 100;
         public const int KnightValue = 305;
@@ -162,11 +163,13 @@ namespace šachys
             int[] poziceWKral = null;
             int[] poziceBKral = null;
 
-            foreach (Button b in hraciPole)
+            for (int py = 0; py < 8; py++)
+            for (int px = 0; px < 8; px++)
             {
+                Button b = hraciPole[py, px];
                 if (b.Tag == null) continue;
                 string figurka = b.Tag.ToString();
-                int[] pozice = realizacePohybu.hledacSouradnic(b, hraciPole);
+                int[] pozice = new int[] { py, px };
                 double figurkaValue = 0;
                 double poziceValue = 0;
                 bool barva = Char.IsUpper(figurka[0]);
@@ -214,7 +217,8 @@ namespace šachys
                         break;
                 }
 
-                poziceValue += (detekceSachu.tahyProtiSachuMatu(stavPole, hraciPole, barva, b).Count) * 2;
+                // mobilita z pseudo-legalnich tahu - plna legalita je tady zbytecne draha
+                poziceValue += tahFigurka.vypocetTahu(pozice, figurka, stavPole, hraciPole).Count;
 
                 if (barva)
                 {
@@ -238,16 +242,20 @@ namespace šachys
 
         private bool maPlatneTahy(Button[,] hraciPole, bool bilyNaRade, int[,] stavPole)
         {
-            foreach (Button b in hraciPole)
+            for (int y = 0; y < 8; y++)
             {
-                if (b.Tag == null) continue;
-                string figurka = b.Tag.ToString();
-                if ((bilyNaRade && Char.IsUpper(figurka[0])) || (!bilyNaRade && Char.IsLower(figurka[0])))
+                for (int x = 0; x < 8; x++)
                 {
-                    List<int> legalMoves = detekceSachu.tahyProtiSachuMatu(stavPole, hraciPole, bilyNaRade, b);
-                    if (legalMoves.Count >= 2)
+                    Button b = hraciPole[y, x];
+                    if (b.Tag == null) continue;
+                    string figurka = b.Tag.ToString();
+                    if ((bilyNaRade && Char.IsUpper(figurka[0])) || (!bilyNaRade && Char.IsLower(figurka[0])))
                     {
-                        return true;
+                        List<int> legalMoves = detekceSachu.tahyProtiSachuMatu(stavPole, hraciPole, bilyNaRade, b);
+                        if (legalMoves.Count >= 2)
+                        {
+                            return true;
+                        }
                     }
                 }
             }

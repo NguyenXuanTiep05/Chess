@@ -27,7 +27,10 @@ namespace šachys
         Button vybranaFigurkaBtnGlobal;
         string sebranaFigurkaGlobal;
         bool povyseni;
-        List<TAH> platneTahy;
+        private const int TimeLimitMs = 5000;
+        private const int MaxQuiescenceDepth = 8;
+        private Stopwatch searchTimer = new Stopwatch();
+        private bool searchAborted;
         private Dictionary<string, double> transpositionTable = new Dictionary<string, double>();
         private Dictionary<int, List<int[]>> NacteneHry = new Dictionary<int, List<int[]>>();
         private int AktualnitTahIndex = 0;
@@ -119,74 +122,73 @@ namespace šachys
             int maxDepth = 10;
             Button vybranaFigurka = null;
             int[] MoveTo = null;
-            double bestScore = bilyNaRade ? double.NegativeInfinity : double.PositiveInfinity;
 
             int klicHry = zjistitHru(posledniTahyList);
             if (klicHry != -1)
             {
-                platneTahy = srovnatTahy(board, stavHracihoPole, bilyNaRade);
+                double bestScore = bilyNaRade ? double.NegativeInfinity : double.PositiveInfinity;
+                List<TAH> platneTahy = srovnatTahy(board, stavHracihoPole, bilyNaRade);
                 int[] tempMove = NacteneHry[klicHry][AktualnitTahIndex];
                 foreach (TAH move in platneTahy)
                 {
                     if (move.To[0] == tempMove[0] && move.To[1] == tempMove[1])
                     {
-                        int[] from = move.From;
-                        int[] To = move.To;
-                        var originalBg = board[To[0], To[1]].BackgroundImage;
-                        var originalTag = board[To[0], To[1]].Tag;
-                        var figurkaTag = board[from[0], from[1]].Tag.ToString();
-                        polozeniFigurek(figurkaTag, from, To, board);
+                        object sebranaFigurka = tahniSearch(move, board);
                         int[,] tempStavPole = updateStavHracihoPole(board);
 
                         double score = evaluaceFigurek.evaluate(board,bilyNaRade, tempStavPole);
 
-                        polozeniFigurek(figurkaTag, To, from, board);
-                        board[To[0], To[1]].BackgroundImage = originalBg;
-                        board[To[0], To[1]].Tag = originalTag;
+                        vratTahSearch(move, board, sebranaFigurka);
                         if ((bilyNaRade && score > bestScore) || (!bilyNaRade && score < bestScore))
                         {
                             bestScore = score;
-                            MoveTo = To;
-                            vybranaFigurka = board[from[0], from[1]];
+                            MoveTo = move.To;
+                            vybranaFigurka = board[move.From[0], move.From[1]];
                         }
                     }
                 }
             }
 
-            else
+            if (vybranaFigurka == null)
             {
+                transpositionTable.Clear();
+                searchAborted = false;
+                searchTimer.Restart();
 
-                Stopwatch timelimit = new Stopwatch();
-                timelimit.Start();
-                for (int depth = 1; depth <= maxDepth; depth++)
+                List<TAH> platneTahy = srovnatTahy(board, stavHracihoPole, bilyNaRade);
+                for (int depth = 1; depth <= maxDepth && !searchAborted; depth++)
                 {
-                    platneTahy = srovnatTahy(board, stavHracihoPole, bilyNaRade);
+                    double alpha = double.NegativeInfinity;
+                    TAH bestMoveDepth = null;
+
                     foreach (TAH move in platneTahy)
                     {
-                        int[] from = move.From;
-                        int[] To = move.To;
-                        var originalBg = board[To[0], To[1]].BackgroundImage;
-                        var originalTag = board[To[0], To[1]].Tag;
-                        var figurkaTag = board[from[0], from[1]].Tag.ToString();
-                        polozeniFigurek(figurkaTag, from, To, board);
+                        object sebranaFigurka = tahniSearch(move, board);
                         int[,] tempStavPole = updateStavHracihoPole(board);
 
-                        double score = Minimax(board, tempStavPole, depth, !bilyNaRade, double.NegativeInfinity, double.PositiveInfinity);
+                        double score = -Minimax(board, tempStavPole, depth - 1, !bilyNaRade, double.NegativeInfinity, -alpha);
 
-                        polozeniFigurek(figurkaTag, To, from, board);
-                        board[To[0], To[1]].BackgroundImage = originalBg;
-                        board[To[0], To[1]].Tag = originalTag;
+                        vratTahSearch(move, board, sebranaFigurka);
 
-                        if ((bilyNaRade && score > bestScore) || (!bilyNaRade && score < bestScore))
-                        {
-                            bestScore = score;
-                            MoveTo = To;
-                            vybranaFigurka = board[from[0], from[1]];
-                        }
-                        if (timelimit.ElapsedMilliseconds > 10000)
+                        if (searchAborted)
                         {
                             break;
                         }
+                        if (bestMoveDepth == null || score > alpha)
+                        {
+                            alpha = score;
+                            bestMoveDepth = move;
+                        }
+                    }
+
+                    // vysledek prevezmeme jen z dokoncene hloubky; z prerusene jen kdyz jeste zadny tah nemame
+                    if (bestMoveDepth != null && (!searchAborted || vybranaFigurka == null))
+                    {
+                        MoveTo = bestMoveDepth.To;
+                        vybranaFigurka = board[bestMoveDepth.From[0], bestMoveDepth.From[1]];
+
+                        platneTahy.Remove(bestMoveDepth);
+                        platneTahy.Insert(0, bestMoveDepth);
                     }
                 }
             }
@@ -214,85 +216,87 @@ namespace šachys
 
         private double Minimax(Button[,] board, int[,] stavHracihoPole, int depth, bool bilyNaRade, double alpha, double beta)
         {
-
-            string boardHash = GetBoardHash(board, bilyNaRade);
-            if (transpositionTable.ContainsKey(boardHash))
+            if (searchAborted || searchTimer.ElapsedMilliseconds > TimeLimitMs)
             {
-                return transpositionTable[boardHash];
+                searchAborted = true;
+                return 0;
             }
 
-            if (depth == 0)
+            string boardHash = GetBoardHash(board, bilyNaRade) + depth;
+            if (transpositionTable.TryGetValue(boardHash, out double cached))
             {
-                double evaluation = captureMinMax(board, stavHracihoPole, bilyNaRade, alpha, beta);
-                transpositionTable[boardHash] = evaluation;
-                return evaluation;
+                return cached;
             }
 
-            platneTahy = srovnatTahy(board, stavHracihoPole, bilyNaRade);
-            if (platneTahy.Count <= 0) return bilyNaRade ? double.NegativeInfinity : double.PositiveInfinity;
-            if (jeKralSach(board, bilyNaRade, platneTahy))
+            if (depth <= 0)
             {
-                depth++;
+                return captureMinMax(board, stavHracihoPole, bilyNaRade, alpha, beta, 0);
             }
 
+            List<TAH> platneTahy = srovnatTahy(board, stavHracihoPole, bilyNaRade);
+            if (platneTahy.Count <= 0)
+            {
+                // mat = prohra hrace na tahu, pat = remiza
+                return detekceSachu.jeKralSach(board, bilyNaRade, stavHracihoPole) ? -1000000 - depth : 0;
+            }
+
+            double bestScore = double.NegativeInfinity;
             foreach (TAH move in platneTahy)
             {
-                int[] From = move.From;
-                int[] To = move.To;
-                var originalBg = board[To[0], To[1]].BackgroundImage;
-                var originalTag = board[To[0], To[1]].Tag;
-                var playedPieceTag = board[From[0], From[1]].Tag.ToString();
-
-                polozeniFigurek(playedPieceTag, From, To, board);
+                object sebranaFigurka = tahniSearch(move, board);
                 int[,] tempStavPole = updateStavHracihoPole(board);
 
-                double score = Minimax(board, tempStavPole, depth - 1, !bilyNaRade, -beta, -alpha);
+                double score = -Minimax(board, tempStavPole, depth - 1, !bilyNaRade, -beta, -alpha);
 
-                polozeniFigurek(playedPieceTag, To, From, board);
-                board[To[0], To[1]].BackgroundImage = originalBg;
-                board[To[0], To[1]].Tag = originalTag;
+                vratTahSearch(move, board, sebranaFigurka);
 
-                if (score >= beta)
+                if (searchAborted)
                 {
-                    return beta;
+                    return 0;
                 }
 
+                bestScore = Math.Max(bestScore, score);
                 alpha = Math.Max(alpha, score);
+                if (alpha >= beta)
+                {
+                    break;
+                }
             }
-            transpositionTable[boardHash] = alpha;
-            return alpha;
+            transpositionTable[boardHash] = bestScore;
+            return bestScore;
         }
 
-        private double captureMinMax(Button[,] board, int[,] stavHracihoPole, bool bilyNaRade, double alpha, double beta)
+        private double captureMinMax(Button[,] board, int[,] stavHracihoPole, bool bilyNaRade, double alpha, double beta, int qDepth)
         {
-            double standPat = evaluaceFigurek.evaluate(board, bilyNaRade, stavHracihoPole);
-            double Bestscore = standPat;
-            if (standPat >= beta)
+            if (searchAborted || searchTimer.ElapsedMilliseconds > TimeLimitMs)
+            {
+                searchAborted = true;
+                return 0;
+            }
+
+            double eval = evaluaceFigurek.evaluate(board, bilyNaRade, stavHracihoPole);
+            double standPat = bilyNaRade ? eval : -eval;
+            if (standPat >= beta || qDepth >= MaxQuiescenceDepth)
             {
                 return standPat;
             }
             alpha = Math.Max(alpha, standPat);
-
+            double Bestscore = standPat;
 
             List<TAH> tahy = GeneraceTahuAI(stavHracihoPole, board, bilyNaRade, true);
-            if (tahy.Count <= 0) { return alpha; }
             foreach (TAH move in tahy)
             {
-                int[] From = move.From;
-                int[] To = move.To;
-                var originalBg = board[To[0], To[1]].BackgroundImage;
-                var originalTag = board[To[0], To[1]].Tag;
-                var playedPieceTag = board[From[0], From[1]].Tag.ToString();
-
-                polozeniFigurek(playedPieceTag, From, To, board);
+                object sebranaFigurka = tahniSearch(move, board);
                 int[,] tempStavPole = updateStavHracihoPole(board);
 
-                double score = captureMinMax(board, tempStavPole, !bilyNaRade, -beta, -alpha);
+                double score = -captureMinMax(board, tempStavPole, !bilyNaRade, -beta, -alpha, qDepth + 1);
 
-                polozeniFigurek(playedPieceTag, To, From, board);
-                board[To[0], To[1]].BackgroundImage = originalBg;
-                board[To[0], To[1]].Tag = originalTag;
+                vratTahSearch(move, board, sebranaFigurka);
 
+                if (searchAborted)
+                {
+                    return 0;
+                }
                 if (score >= beta)
                 {
                     return score;
@@ -301,6 +305,21 @@ namespace šachys
                 alpha = Math.Max(score, alpha);
             }
             return Bestscore;
+        }
+
+        // Tag-only tah pro prohledavani: nesaha na BackgroundImage (zadne prekreslovani UI)
+        private object tahniSearch(TAH move, Button[,] board)
+        {
+            object sebranaFigurka = board[move.To[0], move.To[1]].Tag;
+            board[move.To[0], move.To[1]].Tag = board[move.From[0], move.From[1]].Tag;
+            board[move.From[0], move.From[1]].Tag = null;
+            return sebranaFigurka;
+        }
+
+        private void vratTahSearch(TAH move, Button[,] board, object sebranaFigurka)
+        {
+            board[move.From[0], move.From[1]].Tag = board[move.To[0], move.To[1]].Tag;
+            board[move.To[0], move.To[1]].Tag = sebranaFigurka;
         }
 
         private string GetBoardHash(Button[,] board, bool bilyNaRade)
@@ -319,19 +338,14 @@ namespace šachys
             return sb.ToString();
         }
 
-        List<TAH> sebraniList;
-        List<TAH> sach;
-        List<TAH> povyseniList;
-        List<TAH> ostatni;
         private List<TAH> srovnatTahy(Button[,] hraciPole, int[,] stavPole, bool bilyNaRade)
         {
             List<TAH> tahy = GeneraceTahuAI(stavPole, hraciPole, bilyNaRade, false);
             if (tahy.Count <= 0) { return tahy; }
 
-            sebraniList = new List<TAH>();
-            sach = new List<TAH>();
-            povyseniList = new List<TAH>();
-            ostatni = new List<TAH>();
+            List<TAH> sebraniList = new List<TAH>();
+            List<TAH> povyseniList = new List<TAH>();
+            List<TAH> ostatni = new List<TAH>();
 
             foreach (TAH move in tahy)
             {
@@ -339,11 +353,7 @@ namespace šachys
                 string vybranaFigurka = hraciPole[move.From[0], move.From[1]].Tag.ToString();
                 string captureFiurka = hraciPole[souradnice[0], souradnice[1]].Tag?.ToString();
 
-                if (detekceSachu.testTahuProtiSachuMatu(stavPole, hraciPole, !bilyNaRade, hraciPole[move.From[0], move.From[1]], souradnice))
-                {
-                    sach.Add(move);
-                }
-                else if (captureFiurka != null && ((Char.IsUpper(captureFiurka[0]) && !bilyNaRade) || (Char.IsLower(captureFiurka[0]) && bilyNaRade)))
+                if (captureFiurka != null && ((Char.IsUpper(captureFiurka[0]) && !bilyNaRade) || (Char.IsLower(captureFiurka[0]) && bilyNaRade)))
                 {
                     sebraniList.Add(move);
                 }
@@ -359,7 +369,6 @@ namespace šachys
 
             tahy.Clear();
             tahy.AddRange(sebraniList);
-            tahy.AddRange(sach);
             tahy.AddRange(povyseniList);
             tahy.AddRange(ostatni);
 
@@ -417,20 +426,6 @@ namespace šachys
         }
 
 
-        private bool jeKralSach(Button[,] hraciPole, bool bilyNaRade, List<TAH> moves)
-        {
-            int[] poziceKrale = detekceSachu.hledacPoziceKrale(hraciPole, bilyNaRade);
-            if (poziceKrale == null) { return true; }
-            foreach (TAH t in moves)
-            {
-                if (t.To[0] == poziceKrale[0] && t.To[1] == poziceKrale[1])
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
         private Button[,] polozeniFigurek(string kodfigurky, int[] From, int[] To, Button[,] hraciPole)
         {
             hraciPole[From[0], From[1]].BackgroundImage = null;
@@ -442,12 +437,13 @@ namespace šachys
 
         private int[,] updateStavHracihoPole(Button[,] hraciPole)
         {
+            // podle Tagu, ne BackgroundImage - prohledavani hybe jen s Tagy
             int[,] newStavHracihoPole = new int[8, 8];
             for (int y = 0; y < 8; y++)
             {
                 for (int x = 0; x < 8; x++)
                 {
-                    if (hraciPole[y, x].BackgroundImage != null)
+                    if (hraciPole[y, x].Tag != null)
                     {
                         newStavHracihoPole[y, x] = 1;
                     }

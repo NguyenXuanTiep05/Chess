@@ -17,30 +17,32 @@ namespace šachys
                 return false;
             }
 
-            if ((Char.IsUpper(poziceTestovaneFigurky.Tag.ToString()[0]) && bilyNaRade) || (!Char.IsUpper(poziceTestovaneFigurky.Tag.ToString()[0]) && !bilyNaRade))
+            string figurka = poziceTestovaneFigurky.Tag.ToString();
+            if ((Char.IsUpper(figurka[0]) && bilyNaRade) || (!Char.IsUpper(figurka[0]) && !bilyNaRade))
             {
-                Button[,] temphraciPole = new Button[8, 8];
-                for (int y = 0; y < hraciPole.GetLength(0); y++)
-                {
-                    for (int x = 0; x < hraciPole.GetLength(1); x++)
-                    {
-                        temphraciPole[y, x] = new Button();
-                        temphraciPole[y, x].Tag = hraciPole[y, x].Tag;
-                        temphraciPole[y, x].BackgroundImage = hraciPole[y, x].BackgroundImage;
-                    }
-                }
+                // tah se docasne zahraje jen pres Tagy a stavPole a pak se vrati zpet
+                // (zadne kopirovani celeho pole Buttonu)
+                int[] odkud = realizacePohybu.hledacSouradnic(poziceTestovaneFigurky, hraciPole);
+                int kamY = pozicePolozeniTestovaciFigurky[0];
+                int kamX = pozicePolozeniTestovaciFigurky[1];
 
-                int[,] tempStavPole = (int[,])stavPole.Clone();
+                object puvodniCilTag = hraciPole[kamY, kamX].Tag;
+                int puvodniStavOdkud = stavPole[odkud[0], odkud[1]];
+                int puvodniStavKam = stavPole[kamY, kamX];
 
-                temphraciPole = realizacePohybu.polozeniFigurek(poziceTestovaneFigurky.Tag.ToString(), realizacePohybu.hledacSouradnic(poziceTestovaneFigurky, hraciPole), pozicePolozeniTestovaciFigurky, temphraciPole);
+                hraciPole[kamY, kamX].Tag = figurka;
+                hraciPole[odkud[0], odkud[1]].Tag = null;
+                stavPole[kamY, kamX] = 1;
+                stavPole[odkud[0], odkud[1]] = 0;
 
-                tempStavPole[pozicePolozeniTestovaciFigurky[0], pozicePolozeniTestovaciFigurky[1]] = 1;
-                tempStavPole[realizacePohybu.hledacSouradnic(poziceTestovaneFigurky, hraciPole)[0], realizacePohybu.hledacSouradnic(poziceTestovaneFigurky, hraciPole)[1]] = 0;
+                bool sach = jeKralSach(hraciPole, bilyNaRade, stavPole);
 
-                if (!jeKralSach(temphraciPole, bilyNaRade, tempStavPole))
-                {
-                    return true;
-                }
+                hraciPole[odkud[0], odkud[1]].Tag = figurka;
+                hraciPole[kamY, kamX].Tag = puvodniCilTag;
+                stavPole[odkud[0], odkud[1]] = puvodniStavOdkud;
+                stavPole[kamY, kamX] = puvodniStavKam;
+
+                return !sach;
             }
 
             return false;
@@ -152,17 +154,21 @@ namespace šachys
         {
             poziceKrale = hledacPoziceKrale(hraciPole, bilyNaRade);
             List<int> poziceFigurekSachTemp = new List<int>();
-            foreach (Button t in hraciPole)
+            for (int y = 0; y < 8; y++)
             {
-                if (t.Tag != null)
+                for (int x = 0; x < 8; x++)
                 {
-                    List<int> temp = tahFigurka.vypocetTahu(realizacePohybu.hledacSouradnic(t, hraciPole), t.Tag.ToString(), stavPole, hraciPole);
-                    for (int i = 0; i < temp.Count; i += 2)
+                    Button t = hraciPole[y, x];
+                    if (t.Tag != null)
                     {
-                        if (temp[i] == poziceKrale[0] && temp[i + 1] == poziceKrale[1])
+                        List<int> temp = tahFigurka.vypocetTahu(new int[] { y, x }, t.Tag.ToString(), stavPole, hraciPole);
+                        for (int i = 0; i < temp.Count; i += 2)
                         {
-                            poziceFigurekSachTemp.Add(realizacePohybu.hledacSouradnic(t, hraciPole)[0]);
-                            poziceFigurekSachTemp.Add(realizacePohybu.hledacSouradnic(t, hraciPole)[1]);
+                            if (temp[i] == poziceKrale[0] && temp[i + 1] == poziceKrale[1])
+                            {
+                                poziceFigurekSachTemp.Add(y);
+                                poziceFigurekSachTemp.Add(x);
+                            }
                         }
                     }
                 }
@@ -172,17 +178,15 @@ namespace šachys
 
         public int[] hledacPoziceKrale(Button[,] hraciPole, bool bilyNaRade)
         {
-            foreach (Button t in hraciPole)
+            string hledanyKral = bilyNaRade ? "K" : "k";
+            for (int y = 0; y < 8; y++)
             {
-                if (t.Tag != null)
+                for (int x = 0; x < 8; x++)
                 {
-                    if (t.Tag.ToString() == "k" && !bilyNaRade)
+                    object tag = hraciPole[y, x].Tag;
+                    if (tag != null && tag.ToString() == hledanyKral)
                     {
-                        return realizacePohybu.hledacSouradnic(t, hraciPole);
-                    }
-                    if (t.Tag.ToString() == "K" && bilyNaRade)
-                    {
-                        return realizacePohybu.hledacSouradnic(t, hraciPole);
+                        return new int[] { y, x };
                     }
                 }
             }
@@ -192,11 +196,19 @@ namespace šachys
         public bool jeKralSach(Button[,] hraciPole, bool bilyNaRade, int[,] stavPole)
         {
             poziceKrale = hledacPoziceKrale(hraciPole, bilyNaRade);
-            foreach (Button t in hraciPole)
+            if (poziceKrale == null) { return false; }
+            for (int y = 0; y < 8; y++)
             {
-                if (t.Tag != null)
+                for (int x = 0; x < 8; x++)
                 {
-                    List<int> temp = tahFigurka.vypocetTahu(realizacePohybu.hledacSouradnic(t, hraciPole), t.Tag.ToString(), stavPole, hraciPole);
+                    Button t = hraciPole[y, x];
+                    if (t.Tag == null) continue;
+
+                    string figurka = t.Tag.ToString();
+                    // sach muze dat jen souperova figurka
+                    if (Char.IsUpper(figurka[0]) == bilyNaRade) continue;
+
+                    List<int> temp = tahFigurka.vypocetTahu(new int[] { y, x }, figurka, stavPole, hraciPole);
                     for (int i = 0; i < temp.Count; i += 2)
                     {
                         if (temp[i] == poziceKrale[0] && temp[i + 1] == poziceKrale[1])
